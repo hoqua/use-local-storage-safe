@@ -1,5 +1,11 @@
 # use-local-storage-safe
 
+## 0.2.2
+
+### Patch Changes
+
+- af0b894: No sideEffects
+
 ## 0.2.1
 
 ### Patch Changes
