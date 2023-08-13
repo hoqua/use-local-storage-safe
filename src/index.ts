@@ -81,8 +81,6 @@ export class ExternalStore<T> {
       return;
     }
 
-    console.log("ExternalStore.validated", ExternalStore.validated);
-
     if (
       typeof options?.validateInit !== "function" ||
       ExternalStore.validated
