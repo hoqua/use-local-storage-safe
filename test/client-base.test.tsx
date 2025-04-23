@@ -1,10 +1,10 @@
-import { act, fireEvent, renderHook } from "@testing-library/react";
+import { act, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { ExternalStore, useLocalStorageSafe } from "../src";
 
 describe("Client side", () => {
   afterEach(() => {
     localStorage.clear();
-    ExternalStore.validated = false;
+    ExternalStore.validatedKeys.clear();
     ExternalStore.inMemory.clear();
     ExternalStore.listeners.clear();
     jest.clearAllMocks();
@@ -406,6 +406,84 @@ describe("Client side", () => {
 
       expect(ExternalStore.listeners.get(LISTENERS_KEY)?.size).toBe(0);
     });
+  });
+
+  it("should remove corrupted initial data from storage and log error", async () => {
+    const CORRUPTED_KEY = "CORRUPTED_KEY";
+    const CORRUPTED_DATA = "{invalid: json,";
+    const logSpy = jest.fn();
+
+    localStorage.setItem(CORRUPTED_KEY, CORRUPTED_DATA);
+
+    const { result } = renderHook(() =>
+      useLocalStorageSafe(CORRUPTED_KEY, undefined, {
+        log: logSpy,
+        validateInit: () => true,
+      }),
+    );
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.any(SyntaxError));
+    expect(localStorage.getItem(CORRUPTED_KEY)).toBeNull();
+
+    // Wait for the state to potentially update after the initial render
+    await waitFor(() => {
+      // Expect undefined: Reflects useSyncExternalStore behavior in this edge case
+      // where server snapshot (undefined) transitions to client snapshot (null)
+      // after initial parse error.
+      expect(result.current[0]).toBeUndefined();
+    });
+  });
+
+  it("should handle custom serialization/deserialization", () => {
+    const CUSTOM_KEY = "CUSTOM_KEY";
+    const initialData = new Map<string, number>([
+      ["a", 1],
+      ["b", 2],
+    ]);
+    const updatedData = new Map<string, number>([
+      ["a", 1],
+      ["b", 3],
+    ]);
+
+    const stringifyMap = (value: unknown) => {
+      if (value instanceof Map) {
+        return JSON.stringify([...value.entries()]);
+      }
+      return JSON.stringify(value); // Fallback for default value during init
+    };
+    const parseMap = (stringValue: string): Map<string, number> => {
+      return new Map(JSON.parse(stringValue));
+    };
+
+    // Initial render with custom functions
+    const { result } = renderHook(() =>
+      useLocalStorageSafe(CUSTOM_KEY, initialData, {
+        stringify: stringifyMap,
+        parse: parseMap,
+      }),
+    );
+
+    expect(result.current[0]).toEqual(initialData);
+    expect(localStorage.getItem(CUSTOM_KEY)).toBe(stringifyMap(initialData));
+
+    // Update state
+    act(() => {
+      result.current[1](updatedData);
+    });
+
+    expect(result.current[0]).toEqual(updatedData);
+    expect(localStorage.getItem(CUSTOM_KEY)).toBe(stringifyMap(updatedData));
+
+    // Re-render with same key to test reading with custom parser
+    const { result: result2 } = renderHook(() =>
+      useLocalStorageSafe(CUSTOM_KEY, new Map<string, number>(), {
+        stringify: stringifyMap,
+        parse: parseMap,
+      }),
+    );
+
+    expect(result2.current[0]).toEqual(updatedData); // Should read the stored value
   });
 });
 

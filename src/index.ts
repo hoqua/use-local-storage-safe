@@ -7,12 +7,21 @@ import useSyncExternalStoreExports from "use-sync-external-store/shim/index.js";
 import { getStoreMock } from "./server-store-mock";
 const { useSyncExternalStore } = useSyncExternalStoreExports;
 
+/**
+ * Configuration options for useLocalStorageSafe hook
+ */
 interface Options<T> {
+  /** Custom stringify function to serialize values (default: JSON.stringify) */
   stringify?: (value: unknown) => string;
-  parse?: (string: string) => string;
+  /** Custom parse function to deserialize values (default: JSON.parse) */
+  parse?: (stringValue: string) => T;
+  /** Custom logging function (default: console.log) */
   log?: (message: unknown) => void;
+  /** Function to validate initial stored value */
   validateInit?: (value: T) => boolean;
+  /** Whether to sync with other browser tabs (default: true) */
   sync?: boolean;
+  /** Whether to silently handle errors (default: true) */
   silent?: boolean;
 }
 
@@ -26,15 +35,29 @@ interface Options<T> {
  */
 export function useLocalStorageSafe<T>(
   key: string,
-  defaultValue?: T,
+  defaultValue: T,
   options?: Options<T>,
 ): [T, Dispatch<SetStateAction<T>>];
+
+/**
+ * A custom React hook that allows safe access and manipulation of values in local storage.
+ * @template T - The type of the state value.
+ * @param {string} key - The key under which the state value will be stored in the local storage.
+ * @param {T} [defaultValue] - The initial value for the state. If the key does not exist in the local storage, this value will be used as the default.
+ * @param {Options<T>} [options] - An object containing additional customization options for the hook.
+ * @returns {[T | undefined, SetStateAction<T | undefined>]} - A tuple with the current state value and a function to update it.
+ */
+export function useLocalStorageSafe<T>(
+  key: string,
+  defaultValue?: T,
+  options?: Options<T>,
+): [T | undefined, Dispatch<SetStateAction<T | undefined>>];
 
 export function useLocalStorageSafe<T>(
   key: string,
   defaultValue?: T,
   options?: Options<T>,
-): [T | undefined, Dispatch<SetStateAction<T>>] {
+): [T | undefined, Dispatch<SetStateAction<T | undefined>>] {
   const store = useMemo(
     () =>
       typeof window === "undefined"
@@ -45,14 +68,14 @@ export function useLocalStorageSafe<T>(
 
   const storageValue = useSyncExternalStore(
     useCallback((listener) => store.subscribe(listener, key), [store, key]),
-    () => store.getSnapshot(key),
-    () => defaultValue,
+    useCallback(() => store.getSnapshot(key), [store, key]),
+    useCallback(() => defaultValue, [defaultValue]),
   );
 
   return [
     storageValue,
     useCallback(
-      (value: SetStateAction<T>) => store.setItem(key, value),
+      (value: SetStateAction<T | undefined>) => store.setItem(key, value),
       [key, store],
     ),
   ];
@@ -61,10 +84,10 @@ export function useLocalStorageSafe<T>(
 export class ExternalStore<T> {
   public static readonly listeners: Map<string, Set<VoidFunction>> = new Map();
   public static readonly inMemory: Map<string, unknown> = new Map();
-  public static validated = false;
+  public static readonly validatedKeys: Set<string> = new Set();
 
   private readonly stringify: (value: unknown) => string = JSON.stringify;
-  private readonly parse: (string: string) => string = JSON.parse;
+  private readonly parse: (stringValue: string) => T = JSON.parse;
   private readonly log: (message: unknown) => void = console.log;
   private readonly sync: boolean = true;
   private readonly silent: boolean = true;
@@ -81,30 +104,27 @@ export class ExternalStore<T> {
       return;
     }
 
-    console.log("constructor called");
-
     if (
       typeof options?.validateInit !== "function" ||
-      ExternalStore.validated
+      ExternalStore.validatedKeys.has(key)
     ) {
       return;
     }
 
-    const isValid = options.validateInit(
-      this.getParseableStorageItem<T>(key) as T,
-    );
+    const storedValue = this.getParseableStorageItem<T>(key) as T;
+    const isValid = options.validateInit(storedValue);
 
-    if (!isValid && defaultValue) {
+    if (!isValid && defaultValue !== undefined) {
       this.setStorageItem<T>(key, defaultValue);
-    } else if (!isValid && !defaultValue) {
+    } else if (!isValid) {
       localStorage.removeItem(key);
     }
 
-    ExternalStore.validated = true;
+    ExternalStore.validatedKeys.add(key);
   }
 
-  public setItem(key: string, valueOrFunction: SetStateAction<T>) {
-    const value = isFunction<T>(valueOrFunction)
+  public setItem(key: string, valueOrFunction: SetStateAction<T | undefined>) {
+    const value = isFunction<T | undefined>(valueOrFunction)
       ? valueOrFunction(this.getSnapshot(key))
       : valueOrFunction;
 
@@ -113,33 +133,44 @@ export class ExternalStore<T> {
     this.notifyListeners(key);
   }
 
-  public getSnapshot(key: string) {
+  public getSnapshot(key: string): T | undefined {
     if (!ExternalStore.inMemory.has(key)) {
-      ExternalStore.inMemory.set(key, this.getParseableStorageItem<T>(key));
+      const storedValue = this.getParseableStorageItem<T>(key);
+      ExternalStore.inMemory.set(key, storedValue);
+      return storedValue as T | undefined;
     }
 
-    return ExternalStore.inMemory.get(key) as T;
+    return ExternalStore.inMemory.get(key) as T | undefined;
   }
 
+  /**
+   * Subscribe to changes for a specific key in localStorage
+   * @param listener Function to call when the value changes
+   * @param key Storage key to listen for changes
+   * @returns Unsubscribe function
+   */
   public subscribe(listener: () => void, key: string) {
+    // Handle changes from other browser tabs/windows
     const handleStorageChange = (event: StorageEvent) => {
       if (event.storageArea === localStorage && event.key === key) {
         ExternalStore.inMemory.set(key, this.getParseableStorageItem(key));
-
         this.notifyListeners(key);
       }
     };
 
+    // Register the listener
     if (ExternalStore.listeners.has(key)) {
       ExternalStore.listeners.get(key)!.add(listener);
     } else {
       ExternalStore.listeners.set(key, new Set([listener]));
     }
 
+    // Add storage event listener if sync is enabled
     if (this.sync) {
       window.addEventListener("storage", handleStorageChange);
     }
 
+    // Return unsubscribe function
     return () => {
       window.removeEventListener("storage", handleStorageChange);
 
@@ -149,18 +180,32 @@ export class ExternalStore<T> {
     };
   }
 
+  /**
+   * Notify all registered listeners for a specific key
+   * @param key The storage key whose listeners should be notified
+   */
   private notifyListeners(key: string) {
     const listeners = ExternalStore.listeners.get(key);
-    if (listeners) {
-      for (const listener of listeners) {
+    if (!listeners || listeners.size === 0) return;
+
+    for (const listener of listeners) {
+      try {
         listener();
+      } catch (error) {
+        this.log(`Error in listener for key ${key}: ${error}`);
       }
     }
   }
 
-  private setStorageItem<T>(key: string, value: T | undefined) {
+  /**
+   * Safely set an item in localStorage
+   * @param key The key to store the value under
+   * @param value The value to store
+   * @returns void
+   */
+  private setStorageItem<T>(key: string, value: T | undefined): void {
     try {
-      return localStorage.setItem(key, this.stringify(value));
+      localStorage.setItem(key, this.stringify(value));
     } catch (error) {
       this.log(error);
       if (!this.silent) throw error;
@@ -175,12 +220,13 @@ export class ExternalStore<T> {
     } catch (error) {
       this.log(error);
       if (!this.silent) throw error;
+      return undefined;
     }
 
     if (value === null || value === "undefined") return undefined;
 
     try {
-      return this.parse(value) as T;
+      return this.parse(value) as unknown as T;
     } catch (error) {
       this.log(error);
       localStorage.removeItem(key);
@@ -201,6 +247,6 @@ export class ExternalStore<T> {
 
 function isFunction<T>(
   valueOrFunction: unknown,
-): valueOrFunction is (value: T) => boolean {
+): valueOrFunction is (value: T) => T {
   return typeof valueOrFunction === "function";
 }

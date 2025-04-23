@@ -82,6 +82,11 @@
     "useState",
     "hooks",
     "local storage",
-    "store"
+    "store",
+    "typescript",
+    "ssr",
+    "cross-tab",
+    "sync",
+    "safe"
   ]
 }

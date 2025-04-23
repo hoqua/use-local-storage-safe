@@ -22,6 +22,7 @@ describe("Client faulty store", function () {
   afterEach(() => {
     localStorage.clear();
     ExternalStore.inMemory.clear();
+    ExternalStore.validatedKeys.clear();
     ExternalStore.listeners.clear();
     jest.clearAllMocks();
   });
