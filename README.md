@@ -11,7 +11,7 @@
 
 **Safely persist React state to LocalStorage with SSR compatibility, cross-tab synchronization, and data validation.**
 
-Tired of losing state on refresh? Need to keep UI consistent across browser tabs? Worried about invalid data in LocalStorage breaking your app? `use-local-storage-safe` provides a familiar `useState`-like hook to solve these problems reliably.
+`use-local-storage-safe` is a React hook designed to reliably manage state persistence in LocalStorage. It addresses common requirements such as maintaining state across sessions, ensuring data consistency between browser tabs via synchronization, handling potentially invalid stored data through validation, and supporting server-side rendering, all through a familiar `useState`-like interface.
 
 ## Key Features
 
