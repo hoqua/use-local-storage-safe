@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "MIT",
   "name": "use-local-storage-safe",
   "description": "React hook for using LocalStorage safely",
